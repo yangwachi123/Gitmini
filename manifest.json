@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Auto Refresh Plus TH",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "รีเฟรชหน้าเว็บอัตโนมัติ ตรวจจับคำสำคัญหรือความเปลี่ยนแปลง พร้อมเสียงและการแจ้งเตือน",
   "minimum_chrome_version": "120",
   "icons": {

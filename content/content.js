@@ -175,18 +175,24 @@
   }
 
   // Click an element identified by CSS selector or by visible text.
-  // Priority: valid CSS selector > clickable element containing the text.
+  // Plain words ("a", "ค้นหา") are technically valid type selectors and would
+  // click an unrelated element — only selector-looking strings take the
+  // querySelector path first; plain text matches button text first.
   function clickExplicitTarget(rawTarget) {
     const target = nfc(rawTarget || '').trim();
     if (!target) return false;
-    try {
-      const el = document.querySelector(target);
-      if (el) {
-        el.click();
-        return true;
+    const selectorish = /[#.[\]:>+~*^$|="']/.test(target);
+
+    if (selectorish) {
+      try {
+        const el = document.querySelector(target);
+        if (el) {
+          el.click();
+          return true;
+        }
+      } catch {
+        /* not a valid selector — fall through to text matching */
       }
-    } catch {
-      /* not a valid selector — fall through to text matching */
     }
     const needle = target.toLowerCase();
     for (const el of document.querySelectorAll(CLICKABLE_SELECTOR)) {
@@ -194,6 +200,18 @@
       if (text.includes(needle)) {
         el.click();
         return true;
+      }
+    }
+    // Last resort for plain-word targets: treat as a tag-name selector.
+    if (!selectorish) {
+      try {
+        const el = document.querySelector(target);
+        if (el) {
+          el.click();
+          return true;
+        }
+      } catch {
+        /* not a selector either */
       }
     }
     return false;
@@ -437,6 +455,10 @@
     overlay.nextFireAt = nextFireAt ?? null;
     overlay.status = status ?? null;
     overlay.mode = mode ?? overlay.mode ?? null;
+    // The × dismissal is scoped to the current job: when the job stops (or
+    // the overlay is disabled) clear it, so the next started job shows the
+    // overlay again — important in monitor mode where the page never reloads.
+    if (!enabled || status === 'stopped') overlay.hiddenByUser = false;
     if (enabled && status === 'running') showOverlay();
     else if (enabled && (status === 'found' || status === 'error')) showOverlay();
     else removeOverlay();

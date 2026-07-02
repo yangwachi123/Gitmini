@@ -309,13 +309,21 @@ async function handleSoundUpload(file) {
       reader.onerror = () => reject(reader.error ?? new Error('read failed'));
       reader.readAsDataURL(file);
     });
+    // Probe decodability now — otherwise a corrupt/unsupported file is only
+    // discovered when the alert should be sounding.
+    await new Promise((resolve, reject) => {
+      const probe = new Audio();
+      probe.addEventListener('canplay', resolve, { once: true });
+      probe.addEventListener('error', () => reject(new Error('undecodable')), { once: true });
+      probe.src = dataUrl;
+    });
     await chrome.storage.local.set({
       [STORAGE.CUSTOM_SOUND]: { name: file.name, mime: file.type, dataUrl },
     });
     el.soundSelect.value = 'custom';
     showError(null);
   } catch {
-    showError('อ่านไฟล์เสียงไม่สำเร็จ ลองไฟล์อื่น');
+    showError('ไฟล์เสียงนี้ใช้ไม่ได้ (เสียหายหรือไม่รองรับ) — ลองไฟล์ mp3/wav อื่น');
   }
   await refreshCustomSoundName();
 }
