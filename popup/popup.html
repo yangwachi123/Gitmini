@@ -17,8 +17,8 @@
   </div>
 
   <section id="live-section" class="card hidden">
-    <div class="live-row"><span>จะรีเฟรชอีกครั้งใน</span><strong id="countdown">--:--</strong></div>
-    <div class="live-row"><span>รีเฟรชแล้ว</span><strong id="cycle-count">0 ครั้ง</strong></div>
+    <div class="live-row"><span id="next-label">จะรีเฟรชอีกครั้งใน</span><strong id="countdown">--:--</strong></div>
+    <div class="live-row"><span id="cycle-label">รีเฟรชแล้ว</span><strong id="cycle-count">0 ครั้ง</strong></div>
     <div class="live-row hidden" id="last-found-row">
       <span>พบล่าสุด</span><strong id="last-found"></strong>
     </div>
@@ -33,8 +33,20 @@
     </label>
     <label class="radio">
       <input type="radio" name="mode" value="monitor">
-      <span>ตรวจสอบเบื้องหลัง <small>ดึงเนื้อหามาเช็คโดยไม่รีโหลดหน้า (XHR)</small></span>
+      <span>ตรวจสอบเบื้องหลัง <small>เช็คเนื้อหาโดยไม่รีโหลดหน้า</small></span>
     </label>
+    <div id="monitor-refresh-box" class="sub-box hidden">
+      <label class="radio">
+        <input type="radio" name="monitor-refresh" value="fetch" checked>
+        <span>ดึงข้อมูลอัตโนมัติ (XHR) <small>เหมาะกับเว็บทั่วไป</small></span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="monitor-refresh" value="click">
+        <span>คลิกปุ่มในหน้าเพื่อรีเฟรช <small>เหมาะกับเว็บที่โหลดข้อมูลด้วย JavaScript</small></span>
+      </label>
+      <input type="text" id="monitor-click-target" class="hidden"
+             placeholder="ข้อความบนปุ่ม หรือ CSS selector เช่น ค้นหา, #refresh">
+    </div>
   </section>
 
   <section class="card">
@@ -115,7 +127,7 @@
       </label>
     </div>
     <div class="row">
-      <label class="upload-label btn small">
+      <label class="upload-label btn small" tabindex="0" role="button" id="upload-label">
         อัปโหลดเสียง (mp3/wav)
         <input type="file" id="sound-file" accept="audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" hidden>
       </label>

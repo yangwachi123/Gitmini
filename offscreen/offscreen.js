@@ -68,7 +68,8 @@ async function play({ source, volume, loop, ownerTabId }) {
     currentOwnerTabId = ownerTabId ?? null;
     audio.src = src;
     audio.loop = Boolean(loop);
-    audio.volume = Math.min(100, Math.max(0, Number(volume) ?? 80)) / 100;
+    const vol = Number(volume);
+    audio.volume = (Number.isFinite(vol) ? Math.min(100, Math.max(0, vol)) : 80) / 100;
     await audio.play();
   } catch (err) {
     console.warn('offscreen play failed:', err);

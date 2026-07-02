@@ -56,7 +56,18 @@
   }
 
   function liveText() {
-    return document.body ? document.body.innerText : '';
+    if (!document.body) return '';
+    // Detach our own overlay while reading — its ticking countdown text would
+    // otherwise poison change-detection hashes (and keyword scans) with
+    // ever-changing content of our own making. Synchronous detach+reattach
+    // never reaches the renderer, so there is no flicker.
+    const ov = document.getElementById(OVERLAY_ID);
+    const parent = ov ? ov.parentNode : null;
+    const next = ov ? ov.nextSibling : null;
+    if (ov) ov.remove();
+    const text = document.body.innerText;
+    if (ov && parent) parent.insertBefore(ov, next);
+    return text;
   }
 
   // -------------------------------------------------------------------------
@@ -93,10 +104,15 @@
   }
 
   // Finds match ranges of prepared keywords in a text node. Skips nodes where
-  // lowercasing changes string length (rare Unicode edge) to avoid index drift.
+  // normalization/lowercasing changes string length (rare Unicode edge) to
+  // avoid index drift between the searched string and the raw node.
   function nodeMatches(node, detection) {
     const caseSensitive = Boolean(detection.caseSensitive);
-    const text = node.nodeValue || '';
+    let text = node.nodeValue || '';
+    // Keywords are NFC-normalized; match against NFC page text when the
+    // mapping is index-safe (same length).
+    const nfcText = nfc(text);
+    if (nfcText.length === text.length) text = nfcText;
     const hay = caseSensitive ? text : text.toLowerCase();
     if (hay.length !== text.length) return [];
     const ranges = [];
@@ -120,11 +136,13 @@
 
   function highlightKeywords(detection, scroll) {
     clearHighlights();
-    const created = [];
+    const created = []; // document order — created[0] is the FIRST match
     walkTextNodes((node) => {
       const ranges = nodeMatches(node, detection);
       if (!ranges.length) return;
-      // wrap right-to-left so earlier offsets stay valid
+      // wrap right-to-left so earlier offsets stay valid, but record the
+      // node's spans in left-to-right order
+      const nodeSpans = [];
       for (let i = ranges.length - 1; i >= 0; i--) {
         const [start, end] = ranges[i];
         const target = node.splitText(start);
@@ -133,8 +151,9 @@
         span.className = HIGHLIGHT_CLASS;
         span.textContent = target.nodeValue;
         target.parentNode.replaceChild(span, target);
-        created.unshift(span);
+        nodeSpans.unshift(span);
       }
+      created.push(...nodeSpans);
     });
     if (scroll && created.length) {
       created[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -155,31 +174,37 @@
     return found;
   }
 
-  // Priority: valid CSS selector > clickable element containing the target
-  // text > closest clickable ancestor of the first matched keyword.
+  // Click an element identified by CSS selector or by visible text.
+  // Priority: valid CSS selector > clickable element containing the text.
+  function clickExplicitTarget(rawTarget) {
+    const target = nfc(rawTarget || '').trim();
+    if (!target) return false;
+    try {
+      const el = document.querySelector(target);
+      if (el) {
+        el.click();
+        return true;
+      }
+    } catch {
+      /* not a valid selector — fall through to text matching */
+    }
+    const needle = target.toLowerCase();
+    for (const el of document.querySelectorAll(CLICKABLE_SELECTOR)) {
+      const text = nfc(el.innerText || el.value || '').toLowerCase();
+      if (text.includes(needle)) {
+        el.click();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Priority: explicit target (selector/text) > closest clickable ancestor of
+  // the first matched keyword.
   function autoClick(clickTarget, detection) {
     const target = nfc(clickTarget || '').trim();
 
-    if (target) {
-      try {
-        const el = document.querySelector(target);
-        if (el) {
-          el.click();
-          return true;
-        }
-      } catch {
-        /* not a valid selector — fall through to text matching */
-      }
-      const needle = target.toLowerCase();
-      for (const el of document.querySelectorAll(CLICKABLE_SELECTOR)) {
-        const text = nfc(el.innerText || el.value || '').toLowerCase();
-        if (text.includes(needle)) {
-          el.click();
-          return true;
-        }
-      }
-      return false;
-    }
+    if (target) return clickExplicitTarget(target);
 
     // No explicit target: click the clickable ancestor of the matched keyword.
     if (detection.type !== 'keywords') return false;
@@ -223,6 +248,17 @@
     return { ok: true, found, matchedKeywords, contentHash, clicked };
   }
 
+  // Click-refresh (monitor mode for JS-rendered sites): click the page's own
+  // refresh button, give its AJAX a moment to settle, then scan the live DOM.
+  async function runClickRefresh(req) {
+    clearHighlights(); // stale highlights would confuse the fresh scan
+    if (!clickExplicitTarget(req.refreshTarget)) {
+      return { ok: false, error: 'refresh target not found' };
+    }
+    await new Promise((r) => setTimeout(r, Math.max(0, req.settleMs ?? 1200)));
+    return runLiveScan(req);
+  }
+
   async function runFetchCheck(req) {
     const { detection } = req;
     let text;
@@ -241,11 +277,15 @@
       return { ok: false, error: String(err) };
     }
 
-    const contentHash = fnv1a(collapse(text));
+    const collapsed = collapse(text);
+    const contentHash = fnv1a(collapsed);
     let found = false;
     let matchedKeywords = [];
     if (detection.type === 'keywords') {
-      matchedKeywords = matchKeywords(text, detection);
+      // Match on collapsed text: raw textContent keeps source-HTML newlines
+      // and indentation, which would break multi-word keywords that innerText
+      // (mode A) matches fine.
+      matchedKeywords = matchKeywords(collapsed, detection);
       found = matchedKeywords.length > 0;
     }
     return { ok: true, found, matchedKeywords, contentHash };
@@ -274,7 +314,8 @@
     const total = Math.round(remain / 1000);
     const mm = String(Math.floor(total / 60)).padStart(2, '0');
     const ss = String(total % 60).padStart(2, '0');
-    return `รีเฟรชใน ${mm}:${ss}`;
+    const verb = overlay.mode === 'monitor' ? 'ตรวจสอบใน' : 'รีเฟรชใน';
+    return `${verb} ${mm}:${ss}`;
   }
 
   function buildOverlay() {
@@ -374,6 +415,11 @@
     if (!overlay.tick) {
       overlay.tick = setInterval(() => {
         if (overlay.labelEl) overlay.labelEl.textContent = overlayStatusText();
+        // Many sites rewrite <body> while booting (SPAs) which silently drops
+        // the overlay — re-attach whenever it goes missing.
+        if (overlay.el && !overlay.el.isConnected && !overlay.hiddenByUser && document.body) {
+          document.body.appendChild(overlay.el);
+        }
       }, 500);
     }
     overlay.labelEl.textContent = overlayStatusText();
@@ -387,9 +433,10 @@
     if (overlay.el?.isConnected) overlay.el.remove();
   }
 
-  function applyOverlay({ enabled, nextFireAt, status }) {
+  function applyOverlay({ enabled, nextFireAt, status, mode }) {
     overlay.nextFireAt = nextFireAt ?? null;
     overlay.status = status ?? null;
+    overlay.mode = mode ?? overlay.mode ?? null;
     if (enabled && status === 'running') showOverlay();
     else if (enabled && (status === 'found' || status === 'error')) showOverlay();
     else removeOverlay();
@@ -407,6 +454,10 @@
 
       case 'CS_FETCH_CHECK':
         runFetchCheck(msg).then(sendResponse);
+        return true;
+
+      case 'CS_CLICK_REFRESH':
+        runClickRefresh(msg).then(sendResponse);
         return true;
 
       case 'CS_CLEAR_HIGHLIGHTS':

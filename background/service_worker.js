@@ -12,6 +12,26 @@ import {
 } from '../common/messages.js';
 
 // ---------------------------------------------------------------------------
+// Per-tab serialization: job handlers do read-modify-write on storage.session,
+// so concurrent events for the same tab (timer fire vs stop vs scan result)
+// must not interleave. In-memory is fine — handlers are short, and if the SW
+// dies the pending chain dies with the events it was serializing.
+// ---------------------------------------------------------------------------
+
+const tabLocks = new Map(); // tabId -> tail promise
+
+function withJobLock(tabId, fn) {
+  const prev = tabLocks.get(tabId) ?? Promise.resolve();
+  const run = prev.catch(() => {}).then(fn);
+  const guard = run.catch(() => {});
+  tabLocks.set(tabId, guard);
+  guard.then(() => {
+    if (tabLocks.get(tabId) === guard) tabLocks.delete(tabId);
+  });
+  return run;
+}
+
+// ---------------------------------------------------------------------------
 // Storage helpers
 // ---------------------------------------------------------------------------
 
@@ -136,6 +156,7 @@ async function sendTimerUpdate(job) {
     enabled: Boolean(job.settings.overlay?.enabled),
     nextFireAt: job.status === 'running' ? job.nextFireAt : null,
     status: job.status,
+    mode: job.settings.mode,
   };
   await sendToTab(job.tabId, payload).catch(() => {});
 }
@@ -202,7 +223,7 @@ async function startJob(tabId, settings) {
   // immediately if a keyword is already present on the page.
   if (merged.detection.type !== 'none') {
     try {
-      if (merged.mode === 'monitor') {
+      if (merged.mode === 'monitor' && merged.monitorRefresh?.method !== 'click') {
         const res = await sendToTab(tabId, {
           type: MSG.CS_FETCH_CHECK,
           url: job.url,
@@ -210,6 +231,8 @@ async function startJob(tabId, settings) {
         });
         await processCheckResult(job, res);
       } else {
+        // Reload mode and click-refresh monitor both baseline off the live
+        // DOM (the click method keeps scanning the live DOM every cycle).
         const res = await sendToTab(tabId, buildScanRequest(job));
         await processCheckResult(job, res);
       }
@@ -336,13 +359,16 @@ async function onFound(job, matchedKeywords, res) {
     await toOffscreen({ type: MSG.OS_DISARM, tabId: job.tabId });
   }
 
-  // Mode B found something in the *fetched* copy — reload once so highlight
-  // and auto-click can run against the live page. (Highlight only exists for
-  // keyword detection; change-mode clicking needs an explicit clickTarget.)
+  // Fetch-based mode B found something in the *fetched* copy — reload once so
+  // highlight and auto-click can run against the live page. (The click-refresh
+  // method already scans the live DOM, so highlight/click happened inline.
+  // Highlight only exists for keyword detection; change-mode clicking needs an
+  // explicit clickTarget.)
+  const scansLiveDom = mode === 'reload' || job.settings.monitorRefresh?.method === 'click';
   const wantsDisplayPass =
     (detection.type === 'keywords' && (actions.highlight || actions.autoClick)) ||
     (detection.type === 'change' && actions.autoClick && actions.clickTarget);
-  if (mode === 'monitor' && wantsDisplayPass) {
+  if (!scansLiveDom && mode === 'monitor' && wantsDisplayPass) {
     job.pendingHighlight = true;
   }
   await setJob(job);
@@ -392,10 +418,11 @@ async function onFound(job, matchedKeywords, res) {
     }
   }
 
-  // Mode A + change detection + auto-click: the discovering scan can't click
-  // (the content script doesn't know the baseline) — run a display pass now.
+  // Live-DOM scans (mode A, click-refresh monitor) + change detection +
+  // auto-click: the discovering scan can't click (the content script doesn't
+  // know the baseline) — run a display pass now against the live page.
   if (
-    mode === 'reload' &&
+    scansLiveDom &&
     detection.type === 'change' &&
     actions.autoClick &&
     actions.clickTarget
@@ -425,6 +452,11 @@ async function handleFired(tabId) {
     return;
   }
 
+  // Duplicate fire (watchdog re-armed while a fire was already handled and
+  // scheduled the next cycle): the persisted fire time is still in the
+  // future, so this event is stale — drop it.
+  if (job.nextFireAt - Date.now() > 750) return;
+
   job.cycleCount += 1;
 
   if (job.settings.mode === 'reload') {
@@ -440,14 +472,32 @@ async function handleFired(tabId) {
     return;
   }
 
-  // Monitor mode: background fetch via the content script.
+  // Monitor mode: background fetch, or click an in-page refresh button and
+  // scan the live DOM (for JS-rendered sites).
+  //
+  // The check below can take seconds — persist a provisional next fire time
+  // first so the watchdog never sees an elapsed nextFireAt for a fire that is
+  // already in-flight (which would trigger an immediate duplicate).
+  job.nextFireAt = Date.now() + computeDelayMs(job.settings);
+  await setJob(job);
+
+  const clickMethod = job.settings.monitorRefresh?.method === 'click';
   let res = null;
   try {
-    res = await sendToTab(tabId, {
-      type: MSG.CS_FETCH_CHECK,
-      url: job.url,
-      detection: job.settings.detection,
-    });
+    if (clickMethod) {
+      res = await sendToTab(tabId, {
+        ...buildScanRequest(job),
+        type: MSG.CS_CLICK_REFRESH,
+        refreshTarget: job.settings.monitorRefresh.clickTarget,
+        settleMs: 1200,
+      });
+    } else {
+      res = await sendToTab(tabId, {
+        type: MSG.CS_FETCH_CHECK,
+        url: job.url,
+        detection: job.settings.detection,
+      });
+    }
   } catch {
     res = { ok: false };
   }
@@ -457,7 +507,9 @@ async function handleFired(tabId) {
     if (job.consecutiveFailures >= 3) {
       await errorStop(
         job,
-        'ตรวจสอบหน้าเว็บไม่สำเร็จ 3 ครั้งติดต่อกัน (อาจถูก CSP บล็อก) ลองใช้โหมดรีโหลดหน้าเว็บแทน'
+        clickMethod
+          ? 'ไม่พบปุ่มที่ระบุสำหรับรีเฟรช 3 ครั้งติดต่อกัน — ตรวจสอบข้อความปุ่มหรือ CSS selector'
+          : 'ตรวจสอบหน้าเว็บไม่สำเร็จ 3 ครั้งติดต่อกัน (อาจถูก CSP บล็อก) ลองใช้โหมดรีโหลดหน้าเว็บแทน'
       );
       return;
     }
@@ -484,11 +536,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   switch (msg?.type) {
     case MSG.START_JOB:
-      startJob(msg.tabId, msg.settings).then(sendResponse);
+      withJobLock(msg.tabId, () => startJob(msg.tabId, msg.settings))
+        .then(sendResponse)
+        .catch((err) => sendResponse({ ok: false, error: String(err?.message ?? err) }));
       return true;
 
     case MSG.STOP_JOB:
-      stopJob(msg.tabId).then(sendResponse);
+      withJobLock(msg.tabId, () => stopJob(msg.tabId))
+        .then(sendResponse)
+        .catch((err) => sendResponse({ ok: false, error: String(err?.message ?? err) }));
       return true;
 
     case MSG.PLAY_SOUND:
@@ -503,15 +559,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           ownerTabId: null,
         });
         sendResponse({ ok: true });
-      })();
+      })().catch(() => sendResponse({ ok: false }));
       return true;
 
     case MSG.STOP_SOUND:
-      toOffscreen({ type: MSG.OS_STOP }).then(() => sendResponse({ ok: true }));
+      toOffscreen({ type: MSG.OS_STOP })
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({ ok: false }));
       return true;
 
     case MSG.OS_FIRED:
-      handleFired(msg.tabId).then(() => sendResponse({ ok: true }));
+      withJobLock(msg.tabId, () => handleFired(msg.tabId))
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({ ok: false }));
       return true;
 
     case MSG.OS_AUDIO_STATE:
@@ -523,11 +583,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             ownerTabId: msg.ownerTabId,
           },
         })
-        .then(() => sendResponse({ ok: true }));
+        .then(async () => {
+          // Playback just stopped: without jobs there is nothing keeping the
+          // offscreen document alive (e.g. after a test-sound run).
+          if (!msg.playing) await closeOffscreenIfIdle();
+          sendResponse({ ok: true });
+        })
+        .catch(() => sendResponse({ ok: false }));
       return true;
 
     case MSG.CS_READY:
-      handleContentReady(sender.tab?.id).then(sendResponse);
+      if (sender.tab?.id == null) {
+        sendResponse({ action: 'none' });
+        return undefined;
+      }
+      withJobLock(sender.tab.id, () => handleContentReady(sender.tab.id))
+        .then(sendResponse)
+        .catch(() => sendResponse({ action: 'none' }));
       return true;
 
     default:
@@ -544,6 +616,7 @@ async function handleContentReady(tabId) {
     enabled: Boolean(job.settings.overlay?.enabled),
     nextFireAt: job.status === 'running' ? job.nextFireAt : null,
     status: job.status,
+    mode: job.settings.mode,
   };
 
   if (job.pendingScan || job.pendingHighlight) {
@@ -551,9 +624,10 @@ async function handleContentReady(tabId) {
     job.pendingScan = false;
     job.pendingHighlight = false;
     await setJob(job);
-    // Run the scan asynchronously — CS_READY's response only carries overlay
-    // state; scan results come back via the CS_SCAN response path.
-    (async () => {
+    // Run the scan asynchronously (fire-and-forget) — CS_READY's response
+    // only carries overlay state. The scan takes its own turn on the job
+    // lock so it can't interleave with a stop/fire for the same tab.
+    withJobLock(tabId, async () => {
       try {
         const fresh = await getJob(tabId);
         if (!fresh) return;
@@ -562,7 +636,7 @@ async function handleContentReady(tabId) {
       } catch {
         /* tab navigated away mid-scan */
       }
-    })();
+    });
   }
 
   return { action: 'ok', overlay };
@@ -573,17 +647,22 @@ async function handleContentReady(tabId) {
 // ---------------------------------------------------------------------------
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  stopJob(tabId, { silent: true });
+  withJobLock(tabId, () => stopJob(tabId, { silent: true }));
+  chrome.storage.session.remove(STORAGE.DRAFT_PREFIX + tabId);
 });
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (!changeInfo.url) return;
+  withJobLock(tabId, () => handleTabUrlChange(tabId, changeInfo.url));
+});
+
+async function handleTabUrlChange(tabId, url) {
   const job = await getJob(tabId);
   if (!job || job.status !== 'running') return;
 
   let sameOrigin = false;
   try {
-    sameOrigin = new URL(changeInfo.url).origin === new URL(job.url).origin;
+    sameOrigin = new URL(url).origin === new URL(job.url).origin;
   } catch {
     sameOrigin = false;
   }
@@ -594,10 +673,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     }
   } else {
     // Reload mode follows the user: keep refreshing whatever page is open.
-    job.url = changeInfo.url;
+    job.url = url;
     await setJob(job);
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // Notifications

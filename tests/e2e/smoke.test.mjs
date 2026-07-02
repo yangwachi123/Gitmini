@@ -568,10 +568,152 @@ scenarios.j_overlay = async () => {
     { timeout: 8000, label: 'overlay attached' }
   );
   const text1 = await page.locator('#arp-timer-overlay').innerText();
-  assert(text1.includes('รีเฟรชใน'), `overlay shows countdown (got "${text1}")`);
+  assert(text1.includes('ตรวจสอบใน'), `overlay shows monitor countdown (got "${text1}")`);
   await sleep(1600);
   const text2 = await page.locator('#arp-timer-overlay').innerText();
   assert(text1 !== text2, `overlay ticks (${text1} vs ${text2})`);
+
+  await stopJob(tabId);
+  await popup.close();
+  await page.close();
+};
+
+// (k) Click-to-refresh monitor mode: the extension clicks the page's own
+//     "load" button each cycle and scans the live DOM — no navigation at all.
+scenarios.k_click_refresh_monitor = async () => {
+  await resetName('k');
+  const { page, tabId } = await openTarget('/spa/k?after=3');
+
+  let navigations = 0;
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) navigations += 1;
+  });
+
+  const popup = await openPopup(tabId);
+  await configure(popup, {
+    mode: 'monitor',
+    detection: 'keywords',
+    keywords: KW,
+    customSeconds: 3,
+    stopRefresh: true,
+    sound: false,
+    notification: false,
+    highlight: true,
+    overlay: false,
+  });
+  await popup.check('input[name="monitor-refresh"][value="click"]');
+  await popup.fill('#monitor-click-target', '#load');
+  await startJob(popup);
+
+  await waitFor(
+    async () => (await readJob(tabId))?.status === 'found',
+    { timeout: 30000, label: 'click-refresh found' }
+  );
+  // Live-DOM scan: highlight inline, and NO reload at any point.
+  await waitFor(
+    () => page.locator('.arp-kw-highlight').count().then((n) => n > 0),
+    { timeout: 10000, label: 'inline highlight without reload' }
+  );
+  assert(navigations === 0, `no navigation in click-refresh mode (got ${navigations})`);
+  // Fragment fetches were driven by the extension clicking the button.
+  assert((await serverJson('/counter/k')).count >= 3, 'button clicked each cycle');
+
+  await stopJob(tabId);
+  await popup.close();
+  await page.close();
+};
+
+// (l) Popup form draft survives closing the popup.
+scenarios.l_popup_draft_persists = async () => {
+  await resetName('l');
+  const { page, tabId } = await openTarget('/page/l?after=999');
+
+  const popup1 = await openPopup(tabId);
+  await configure(popup1, {
+    mode: 'monitor',
+    detection: 'keywords',
+    keywords: 'ร่างทดสอบ_draft',
+    customSeconds: 47,
+    overlay: true,
+  });
+  await popup1.waitForTimeout(300); // let the draft write settle
+  await popup1.close(); // popup closed WITHOUT starting
+
+  const popup2 = await openPopup(tabId);
+  await popup2.waitForTimeout(300);
+  const restored = await popup2.evaluate(() => ({
+    mode: document.querySelector('input[name="mode"]:checked').value,
+    keywords: document.getElementById('keywords').value,
+    interval: document.getElementById('interval-select').value,
+    seconds: document.getElementById('custom-seconds').value,
+    overlay: document.getElementById('overlay-enabled').checked,
+  }));
+  assert(restored.mode === 'monitor', `draft mode restored (got ${restored.mode})`);
+  assert(restored.keywords === 'ร่างทดสอบ_draft', 'draft keywords restored');
+  assert(restored.interval === 'custom' && restored.seconds === '47', 'draft interval restored');
+  assert(restored.overlay === true, 'draft overlay toggle restored');
+
+  await popup2.close();
+  await page.close();
+};
+
+// (m) Overlay survives the page rewriting <body> (SPA boot pattern).
+scenarios.m_overlay_survives_rewrite = async () => {
+  await resetName('m');
+  const { page, tabId } = await openTarget('/page/m?after=999');
+  const popup = await openPopup(tabId);
+  await configure(popup, {
+    mode: 'monitor',
+    detection: 'none',
+    customSeconds: 5,
+    sound: false,
+    notification: false,
+    overlay: true,
+  });
+  await startJob(popup);
+
+  await waitFor(
+    () => page.locator('#arp-timer-overlay').count().then((n) => n > 0),
+    { timeout: 8000, label: 'overlay attached' }
+  );
+  // Simulate an SPA wiping and rebuilding the DOM.
+  await page.evaluate(() => {
+    document.body.innerHTML = '<h1>rebuilt</h1>';
+  });
+  await waitFor(
+    () => page.locator('#arp-timer-overlay').count().then((n) => n > 0),
+    { timeout: 5000, label: 'overlay re-attached after body rewrite' }
+  );
+
+  await stopJob(tabId);
+  await popup.close();
+  await page.close();
+};
+
+// (n) Regression: change detection with the overlay enabled must NOT
+//     false-positive on a static page (the overlay's own ticking countdown
+//     text must be excluded from the content hash).
+scenarios.n_change_ignores_overlay = async () => {
+  await resetName('n');
+  // /spa/<name> is a static shell — identical HTML on every load.
+  const { page, tabId } = await openTarget('/spa/n?after=999');
+  const popup = await openPopup(tabId);
+  await configure(popup, {
+    mode: 'reload',
+    detection: 'change',
+    customSeconds: 3,
+    stopRefresh: true,
+    sound: false,
+    notification: false,
+    overlay: true,
+  });
+  await startJob(popup);
+
+  await sleep(11000); // ~3 reload cycles with the overlay ticking
+  const job = await readJob(tabId);
+  assert(job, 'job still exists');
+  assert(job.status === 'running', `no false change alert (status=${job.status})`);
+  assert(!job.lastResult, 'no found event recorded');
 
   await stopJob(tabId);
   await popup.close();

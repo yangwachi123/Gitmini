@@ -11,10 +11,15 @@ const el = {
   liveSection: $('live-section'),
   countdown: $('countdown'),
   cycleCount: $('cycle-count'),
+  nextLabel: $('next-label'),
+  cycleLabel: $('cycle-label'),
+  uploadLabel: $('upload-label'),
   lastFoundRow: $('last-found-row'),
   lastFound: $('last-found'),
   errorRow: $('error-row'),
   errorText: $('error-text'),
+  monitorRefreshBox: $('monitor-refresh-box'),
+  monitorClickTarget: $('monitor-click-target'),
   intervalSelect: $('interval-select'),
   customBox: $('custom-interval'),
   customSeconds: $('custom-seconds'),
@@ -75,6 +80,7 @@ const PRESETS = new Set(['5', '10', '15', '30', '60', '300', '900']);
 
 function settingsFromForm() {
   const mode = document.querySelector('input[name="mode"]:checked').value;
+  const monitorMethod = document.querySelector('input[name="monitor-refresh"]:checked').value;
   const detectionType = document.querySelector('input[name="detection"]:checked').value;
 
   const ivChoice = el.intervalSelect.value;
@@ -100,6 +106,10 @@ function settingsFromForm() {
 
   return {
     mode,
+    monitorRefresh: {
+      method: monitorMethod,
+      clickTarget: el.monitorClickTarget.value.trim(),
+    },
     interval,
     detection: {
       type: detectionType,
@@ -122,6 +132,9 @@ function settingsFromForm() {
 
 function fillForm(s) {
   document.querySelector(`input[name="mode"][value="${s.mode}"]`).checked = true;
+  const mrMethod = s.monitorRefresh?.method === 'click' ? 'click' : 'fetch';
+  document.querySelector(`input[name="monitor-refresh"][value="${mrMethod}"]`).checked = true;
+  el.monitorClickTarget.value = s.monitorRefresh?.clickTarget || '';
   document.querySelector(`input[name="detection"][value="${s.detection.type}"]`).checked = true;
 
   const iv = s.interval;
@@ -157,6 +170,10 @@ function syncConditionalRows() {
   const detection = document.querySelector('input[name="detection"]:checked').value;
   el.keywordsBox.classList.toggle('hidden', detection !== 'keywords');
   el.clickTargetBox.classList.toggle('hidden', !el.ofAutoclick.checked);
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  el.monitorRefreshBox.classList.toggle('hidden', mode !== 'monitor');
+  const mrMethod = document.querySelector('input[name="monitor-refresh"]:checked').value;
+  el.monitorClickTarget.classList.toggle('hidden', mrMethod !== 'click');
   el.volumeValue.textContent = `${el.volume.value}%`;
 }
 
@@ -174,10 +191,18 @@ function validate(s) {
   if (s.detection.type === 'keywords' && s.detection.keywords.length === 0) {
     return 'กรุณาใส่คำที่ต้องการตรวจจับอย่างน้อย 1 คำ (หรือเลือก "ไม่ต้องตรวจจับ")';
   }
+  if (s.mode === 'monitor' && s.monitorRefresh.method === 'click' && !s.monitorRefresh.clickTarget) {
+    return 'กรุณาระบุปุ่มที่จะคลิกเพื่อรีเฟรช (ข้อความบนปุ่ม หรือ CSS selector)';
+  }
   if (s.detection.type === 'change' && s.onFound.autoClick && !s.onFound.clickTarget) {
     return 'โหมดตรวจจับความเปลี่ยนแปลง + คลิกอัตโนมัติ ต้องระบุข้อความปุ่มหรือ CSS selector';
   }
-  if (s.sound.id === 'custom' && s.onFound.sound && !customSoundAvailable) {
+  if (
+    s.detection.type !== 'none' &&
+    s.sound.id === 'custom' &&
+    s.onFound.sound &&
+    !customSoundAvailable
+  ) {
     return 'ยังไม่ได้อัปโหลดไฟล์เสียง — อัปโหลดก่อน หรือเลือกเสียงในตัว';
   }
   return null;
@@ -210,6 +235,10 @@ function renderStatus() {
   el.startStop.classList.toggle('stop', Boolean(job));
 
   if (!job) return;
+
+  const monitor = job.settings?.mode === 'monitor';
+  el.nextLabel.textContent = monitor ? 'จะตรวจสอบอีกครั้งใน' : 'จะรีเฟรชอีกครั้งใน';
+  el.cycleLabel.textContent = monitor ? 'ตรวจสอบแล้ว' : 'รีเฟรชแล้ว';
 
   if (job.status === 'running' && job.nextFireAt) {
     const remain = Math.max(0, job.nextFireAt - Date.now());
@@ -273,17 +302,21 @@ async function handleSoundUpload(file) {
     showError('ไฟล์เสียงใหญ่เกิน 8 MB');
     return;
   }
-  const dataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-  await chrome.storage.local.set({
-    [STORAGE.CUSTOM_SOUND]: { name: file.name, mime: file.type, dataUrl },
-  });
-  el.soundSelect.value = 'custom';
-  showError(null);
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+      reader.readAsDataURL(file);
+    });
+    await chrome.storage.local.set({
+      [STORAGE.CUSTOM_SOUND]: { name: file.name, mime: file.type, dataUrl },
+    });
+    el.soundSelect.value = 'custom';
+    showError(null);
+  } catch {
+    showError('อ่านไฟล์เสียงไม่สำเร็จ ลองไฟล์อื่น');
+  }
   await refreshCustomSoundName();
 }
 
@@ -292,6 +325,12 @@ async function handleSoundUpload(file) {
 // ---------------------------------------------------------------------------
 
 async function init() {
+  // The global stop-sound control must work everywhere — a looping alarm
+  // should never be unstoppable just because the current tab is restricted.
+  el.stopSound.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: MSG.STOP_SOUND });
+  });
+
   const tab = await resolveTab();
   const refreshable = tab && /^https?:\/\//i.test(tab.url || '');
 
@@ -300,6 +339,8 @@ async function init() {
     document
       .querySelectorAll('input, select, textarea, button')
       .forEach((n) => (n.disabled = true));
+    await refreshAudioState(); // re-enables stop-sound if audio is playing
+    ticker = setInterval(refreshAudioState, 500);
     return;
   }
   tabId = tab.id;
@@ -309,24 +350,41 @@ async function init() {
   await refreshCustomSoundName();
   await refreshAudioState();
 
-  // A running job's settings win over saved defaults.
-  fillForm(job?.settings ?? defaults ?? DEFAULT_SETTINGS);
+  // Priority: running job's settings > unsaved draft (popup was closed while
+  // editing) > saved defaults.
+  const draftKey = STORAGE.DRAFT_PREFIX + tabId;
+  const { [draftKey]: draft } = await chrome.storage.session.get(draftKey);
+  fillForm(job?.settings ?? draft ?? defaults ?? DEFAULT_SETTINGS);
   renderStatus();
+
+  // Persist every edit so closing the popup never loses form state.
+  const saveDraft = () => {
+    try {
+      chrome.storage.session.set({ [draftKey]: settingsFromForm() });
+    } catch {
+      /* form mid-edit; next event will save */
+    }
+  };
+  document.body.addEventListener('input', saveDraft);
+  document.body.addEventListener('change', saveDraft);
 
   ticker = setInterval(async () => {
     await refreshJob();
     await refreshAudioState();
   }, 250);
 
-  // form events
-  el.intervalSelect.addEventListener('change', syncConditionalRows);
+  // form events — delegate so every radio/select/checkbox keeps the
+  // conditional rows in sync (mode, monitor-refresh, detection, interval, ...)
+  document.body.addEventListener('change', syncConditionalRows);
   el.volume.addEventListener('input', syncConditionalRows);
-  el.ofAutoclick.addEventListener('change', syncConditionalRows);
-  document
-    .querySelectorAll('input[name="detection"]')
-    .forEach((n) => n.addEventListener('change', syncConditionalRows));
 
   el.soundFile.addEventListener('change', (e) => handleSoundUpload(e.target.files[0]));
+  el.uploadLabel.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      el.soundFile.click();
+    }
+  });
 
   el.testSound.addEventListener('click', async () => {
     const s = settingsFromForm();
@@ -336,10 +394,6 @@ async function init() {
     }
     showError(null);
     await chrome.runtime.sendMessage({ type: MSG.PLAY_SOUND, sound: s.sound });
-  });
-
-  el.stopSound.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: MSG.STOP_SOUND });
   });
 
   el.saveDefaults.addEventListener('click', async () => {
@@ -357,7 +411,7 @@ async function init() {
 
   el.startStop.addEventListener('click', async () => {
     if (job) {
-      await chrome.runtime.sendMessage({ type: MSG.STOP_JOB, tabId });
+      await chrome.runtime.sendMessage({ type: MSG.STOP_JOB, tabId }).catch(() => {});
       await refreshJob();
       return;
     }
@@ -369,11 +423,13 @@ async function init() {
     }
     showError(null);
     el.startStop.disabled = true;
-    const res = await chrome.runtime.sendMessage({ type: MSG.START_JOB, tabId, settings: s });
-    el.startStop.disabled = false;
-    if (!res?.ok) {
-      showError(res?.error ?? 'เริ่มไม่สำเร็จ');
-      return;
+    try {
+      const res = await chrome.runtime.sendMessage({ type: MSG.START_JOB, tabId, settings: s });
+      if (!res?.ok) showError(res?.error ?? 'เริ่มไม่สำเร็จ');
+    } catch (err) {
+      showError(`เริ่มไม่สำเร็จ: ${err?.message ?? err}`);
+    } finally {
+      el.startStop.disabled = false;
     }
     await refreshJob();
   });

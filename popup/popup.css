@@ -98,6 +98,13 @@ textarea { width: 100%; resize: vertical; margin: 6px 0 2px; }
 
 #keywords-box { margin: 2px 0 4px 24px; }
 
+.sub-box {
+  margin: 2px 0 4px 24px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--line);
+}
+.sub-box input[type="text"] { margin-top: 4px; }
+
 .volume-label { flex: 1; display: flex; align-items: center; gap: 8px; }
 .volume-label input[type="range"] { flex: 1; }
 #volume-value { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; }

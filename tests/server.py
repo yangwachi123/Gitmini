@@ -9,6 +9,12 @@ Endpoints (per-name isolated state, stdlib only):
                                       button that POSTs /clicked/<name>.
   GET  /changing/<name>?after=N       HTML page whose text content changes
                                       from the N-th request on (no keyword).
+  GET  /spa/<name>?after=N            static shell page (not counted) with a
+                                      "โหลดข้อมูล" button that fetches
+                                      /fragment/<name> into #content — for
+                                      testing click-to-refresh monitor mode.
+  GET  /fragment/<name>?after=N&kw=W  text fragment; counted; contains W from
+                                      the N-th request on.
   GET  /counter/<name>                {"count": int, "times": [epoch_ms, ...]}
   GET  /clicks/<name>                 {"clicks": int}
   POST /clicked/<name>                record a button click
@@ -89,6 +95,35 @@ class Handler(BaseHTTPRequestHandler):
 <p><button id="act" onclick="fetch('/clicked/{name}', {{method: 'POST'}})">ดำเนินการ</button></p>
 </body></html>"""
             self._send(200, body)
+            return
+
+        if len(parts) == 2 and parts[0] == "spa":
+            # Static shell — intentionally NOT counted; only fragment fetches
+            # (triggered by the in-page button) increment the counter.
+            name = parts[1]
+            after = int(qs.get("after", ["3"])[0])
+            body = f"""<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8"><title>SPA ทดสอบ {name}</title></head>
+<body>
+<h1>หน้า SPA ทดสอบ</h1>
+<p><button id="load"
+  onclick="fetch('/fragment/{name}?after={after}').then(r => r.text())
+    .then(t => {{ document.getElementById('content').innerHTML = t; }})">โหลดข้อมูล</button></p>
+<div id="content">ยังไม่ได้โหลดข้อมูล</div>
+</body></html>"""
+            self._send(200, body)
+            return
+
+        if len(parts) == 2 and parts[0] == "fragment":
+            name = parts[1]
+            after = int(qs.get("after", ["3"])[0])
+            keyword = qs.get("kw", [DEFAULT_KEYWORD])[0]
+            with _lock:
+                _counts[name] += 1
+                _times[name].append(int(time.time() * 1000))
+                count = _counts[name]
+            status = f"<p>{keyword} — มีของแล้ว!</p>" if count >= after else "<p>ยังไม่มีสินค้า</p>"
+            self._send(200, f"<p>โหลดข้อมูลรอบที่ {count}</p>{status}")
             return
 
         if len(parts) == 2 and parts[0] == "counter":

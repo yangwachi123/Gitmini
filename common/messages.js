@@ -30,6 +30,7 @@ export const MSG = {
   CS_READY: 'CS_READY', // content -> SW on every injection: {href}
   CS_SCAN: 'CS_SCAN', // SW -> content: scan live DOM
   CS_FETCH_CHECK: 'CS_FETCH_CHECK', // SW -> content: background fetch + scan
+  CS_CLICK_REFRESH: 'CS_CLICK_REFRESH', // SW -> content: click in-page button, settle, scan live DOM
   CS_CLEAR_HIGHLIGHTS: 'CS_CLEAR_HIGHLIGHTS',
   CS_TIMER_UPDATE: 'CS_TIMER_UPDATE', // SW -> content: floating overlay state
 };
@@ -39,6 +40,7 @@ export const STORAGE = {
   CUSTOM_SOUND: 'customSound', // storage.local — {name, mime, dataUrl}
   OVERLAY_POS_PREFIX: 'overlayPos:', // storage.local — per-origin {left, top}
   JOB_PREFIX: 'job:', // storage.session — per-tab job state
+  DRAFT_PREFIX: 'draft:', // storage.session — per-tab unsaved popup form state
   AUDIO_STATE: 'audioState', // storage.session — {playing, soundId, ownerTabId}
 };
 
@@ -49,6 +51,9 @@ export const BUILTIN_SOUNDS = ['beep', 'chime', 'alarm', 'ding'];
 
 export const DEFAULT_SETTINGS = {
   mode: 'reload', // 'reload' (A) | 'monitor' (B)
+  // How monitor mode refreshes content: background fetch, or clicking an
+  // in-page button (for JS-rendered sites) then scanning the live DOM.
+  monitorRefresh: { method: 'fetch', clickTarget: '' },
   interval: { type: 'preset', seconds: 30, minSeconds: 20, maxSeconds: 60 },
   detection: { type: 'keywords', keywords: [], caseSensitive: false },
   onFound: {
