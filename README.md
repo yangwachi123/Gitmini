@@ -1,75 +1,107 @@
-# Gitmini
+# Auto Refresh Plus TH
 
 [![CI](https://github.com/yangwachi123/Gitmini/actions/workflows/ci.yml/badge.svg)](https://github.com/yangwachi123/Gitmini/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A minimal, ready-to-build-on Python command-line tool skeleton.
+Chrome extension (Manifest V3) รีเฟรชหน้าเว็บอัตโนมัติ พร้อมระบบตรวจจับคำสำคัญ/ความเปลี่ยนแปลง
+และแจ้งเตือนด้วยเสียง — เหมาะกับการเฝ้ารอสินค้า restock, รอคิวจอง, เฝ้าหน้าประกาศ
+เขียนด้วย vanilla JavaScript ล้วน ไม่มี build step ไม่มี dependency
 
-This repository is a clean starting point: modern packaging, a `src/` layout,
-linting and formatting with [Ruff](https://docs.astral.sh/ruff/), tests with
-[pytest](https://docs.pytest.org/), and continuous integration via GitHub
-Actions. Application logic is intentionally minimal — build your features on
-top of it.
+## ฟีเจอร์
 
-## Requirements
+- **2 โหมดการทำงาน (เลือกได้ต่อแท็บ)**
+  - **รีโหลดหน้าเว็บ** — รีเฟรชทั้งหน้าตามรอบเวลา แล้วสแกนเนื้อหาหลังโหลดเสร็จ
+  - **ตรวจสอบเบื้องหลัง (XHR Monitor)** — ดึงเนื้อหามาเช็คโดย*ไม่รีโหลดหน้า* หน้าจอนิ่งสนิท
+- **การตรวจจับ 3 แบบ**
+  - ตรวจจับคำ: หลายคำ (บรรทัดละคำ) เจอคำใดคำหนึ่งก็แจ้ง + เลือก case-sensitive ได้
+  - ตรวจจับความเปลี่ยนแปลงของหน้า (ไม่ต้องระบุคำ)
+  - ไม่ตรวจจับ (รีเฟรชอย่างเดียว)
+- **ช่วงเวลารีเฟรช** — preset 5 วินาที–15 นาที, กำหนดเอง (ต่ำสุด 2 วินาที),
+  หรือ**สุ่มช่วงเวลา** min–max ใหม่ทุกรอบ (ช่วยเลี่ยงการถูกมองว่าเป็นบอท)
+- **เมื่อพบ (ตั้งค่าแยกได้ทุกข้อ)** — หยุด/ไม่หยุดรีเฟรช · เล่นเสียงวนจนกดหยุด ·
+  แจ้งเตือนบนเดสก์ท็อป (คลิกเพื่อกระโดดไปแท็บ) · ไฮไลต์คำที่พบ + เลื่อนจอไปหา ·
+  สลับมาที่แท็บอัตโนมัติ · **คลิกปุ่ม/ลิงก์อัตโนมัติ** (ระบุข้อความปุ่ม, CSS selector
+  หรือเว้นว่างให้คลิกตรงคำที่พบ)
+- **เสียงแจ้งเตือน** — เสียงในตัว 4 แบบ + ปุ่มทดสอบ, ปรับระดับเสียง 0–100%,
+  อัปโหลดไฟล์ mp3/wav ของตัวเอง (ไม่เกิน 8 MB)
+- **ตัวจับเวลาลอยบนหน้าเว็บ** — countdown ซ้อนบนหน้า ลากย้ายได้ จำตำแหน่งต่อเว็บไซต์
+- **แยกการตั้งค่าต่อแท็บ** — รันพร้อมกันหลายแท็บ ต่างค่ากันได้ + บันทึกค่าเริ่มต้นสำหรับแท็บใหม่
+- UI ภาษาไทยทั้งหมด
 
-- Python 3.10 or newer
+## การติดตั้ง (โหลดแบบ unpacked)
 
-## Installation
+1. โคลนหรือดาวน์โหลด repo นี้
+2. เปิด Chrome ไปที่ `chrome://extensions`
+3. เปิดสวิตช์ **Developer mode** (มุมขวาบน)
+4. กด **Load unpacked** แล้วเลือกโฟลเดอร์ของ repo (โฟลเดอร์ที่มี `manifest.json`)
+5. ปักหมุดไอคอน แล้วเปิดหน้าเว็บที่ต้องการ → คลิกไอคอน → ตั้งค่า → **เริ่ม**
 
-Install from source in editable mode:
+ต้องใช้ Chrome/Chromium เวอร์ชัน 120 ขึ้นไป
+
+## สิทธิ์ที่ขอ (permissions) และเหตุผล
+
+| สิทธิ์ | ใช้ทำอะไร |
+|---|---|
+| `storage`, `unlimitedStorage` | เก็บค่าตั้งค่า สถานะ job และไฟล์เสียงที่อัปโหลด |
+| `offscreen` | เล่นเสียงแจ้งเตือน + โฮสต์ตัวจับเวลากลาง (MV3 service worker ทำเองไม่ได้) |
+| `notifications` | แจ้งเตือนบนเดสก์ท็อปเมื่อพบ |
+| `alarms` | watchdog ทุก 30 วินาที กู้คืนตัวจับเวลาหากถูกระบบปิด |
+| `scripting` | ฉีด content script เข้าแท็บที่เปิดค้างอยู่ก่อนติดตั้ง |
+| `host_permissions` http/https | สแกนเนื้อหา ไฮไลต์คำ และรีเฟรชได้ทุกเว็บ (ไม่รองรับ `file://`, `chrome://`) |
+
+ส่วนขยายนี้**ไม่ส่งข้อมูลออกนอกเครื่อง**ทุกกรณี — ทุกอย่างทำงานในเบราว์เซอร์เท่านั้น
+
+## ข้อจำกัดที่ควรรู้
+
+- **ปิดเบราว์เซอร์ = job หยุด** — งานรีเฟรชไม่ resume หลังรีสตาร์ต (ค่าเริ่มต้นที่บันทึกไว้ยังอยู่)
+- โหมดตรวจสอบเบื้องหลังอาจถูก CSP ของบางเว็บบล็อก — ระบบจะหยุดพร้อมแจ้งเหตุหลังพลาด 3 ครั้งติด
+  (แนะนำสลับไปโหมดรีโหลดหน้าเว็บ) และเนื้อหาที่ render ด้วย JavaScript ฝั่ง client จะมองไม่เห็น
+- โหมดตรวจจับความเปลี่ยนแปลงบนหน้าที่มีส่วนขยับตลอด (นาฬิกา/โฆษณา) จะแจ้งบ่อยเกินจริง —
+  ใช้โหมดตรวจจับคำแทน
+- คำที่ถูก HTML tag คั่นกลาง (เช่น `ราค<b>า</b>`) ตรวจ*เจอ*แต่ไฮไลต์ไม่ได้ (best-effort)
+- ถ้าแท็บถูกพาไปเว็บอื่น (คนละ origin) ระหว่างโหมดตรวจสอบเบื้องหลัง job จะหยุดเองพร้อมข้อความแจ้ง
+
+## โครงสร้างโปรเจกต์
+
+```
+manifest.json                  # MV3 manifest
+common/messages.js             # ค่าคงที่ message types + storage keys (source of truth)
+background/service_worker.js   # นโยบายทั้งหมด: job lifecycle, on-found pipeline, watchdog
+content/content.js             # สแกนคำ, fetch-check, ไฮไลต์, auto-click, ตัวจับเวลาลอย
+content/highlight.css          # สไตล์ไฮไลต์
+offscreen/                     # ตัวจับเวลากลาง (Web Worker) + เล่นเสียง
+popup/                         # UI ภาษาไทย
+assets/icons|sounds/           # สร้างจากสคริปต์ใน tools/ (deterministic)
+tools/                         # generate_icons.py, generate_sounds.py (stdlib ล้วน)
+tests/server.py                # เซิร์ฟเวอร์จำลองสำหรับทดสอบ
+tests/e2e/smoke.test.mjs       # Playwright e2e 10 สถานการณ์
+```
+
+## การพัฒนา / ทดสอบ
+
+ตัว extension ไม่ต้อง build ใดๆ — แก้ไฟล์แล้วกด refresh ที่ `chrome://extensions` ได้เลย
+
+ตรวจ syntax และ assets:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+python3 -c "import json; json.load(open('manifest.json'))"
+git ls-files '*.js' '*.mjs' | xargs -n1 node --check
+python3 tools/generate_sounds.py --check
+python3 tools/generate_icons.py --check
 ```
 
-## Usage
+รัน e2e (ต้องมี Playwright + Chromium; ตัวทดสอบจะเปิด test server ให้เอง):
 
 ```bash
-gitmini --version
-gitmini hello
-gitmini hello Ada
+npm i -g playwright && npx playwright install chromium
+node tests/e2e/smoke.test.mjs        # ทั้งชุด (~3 นาที)
+node tests/e2e/smoke.test.mjs b      # เฉพาะสถานการณ์ที่ขึ้นต้นด้วย b
 ```
 
-You can also run it as a module:
-
-```bash
-python -m gitmini hello
-```
-
-## Development
-
-Common tasks:
-
-```bash
-ruff check .          # lint
-ruff format .         # format
-pytest                # run the test suite
-```
-
-Optionally enable the pre-commit hooks so linting runs automatically:
-
-```bash
-pip install pre-commit
-pre-commit install
-```
-
-## Project layout
-
-```
-Gitmini/
-├── src/gitmini/        # package source
-│   ├── __init__.py     # version (single source of truth)
-│   ├── __main__.py     # `python -m gitmini`
-│   └── cli.py          # command-line entry point
-├── tests/              # pytest test suite
-├── .github/workflows/  # CI pipeline
-└── pyproject.toml      # packaging, tooling & metadata
-```
+สถานการณ์ที่ครอบคลุม: รอบรีเฟรชโหมด A · เจอคำ→หยุด+เสียง+notification+ไฮไลต์ ·
+โหมด B ตรวจโดยไม่รีโหลด · ขอบเขตช่วงสุ่ม · หลายแท็บอิสระ · countdown ใน popup ·
+รันยาว >60 วินาที (พิสูจน์ watchdog) · ตรวจจับความเปลี่ยนแปลง · auto-click · ตัวจับเวลาลอย
 
 ## License
 
-Released under the [MIT License](LICENSE).
+[MIT](LICENSE)

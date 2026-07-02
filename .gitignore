@@ -1,37 +1,22 @@
-# Byte-compiled / optimized / DLL files
+# Python (tools/ and tests/server.py helpers)
 __pycache__/
 *.py[cod]
-*$py.class
-
-# Distribution / packaging
-.Python
-build/
-dist/
-downloads/
-eggs/
-.eggs/
-*.egg-info/
-*.egg
-wheels/
-share/python-wheels/
-MANIFEST
-
-# Virtual environments
 .venv/
 venv/
-env/
-ENV/
 
-# Test / coverage
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
-.tox/
-.nox/
+# Node (dev tooling only — the extension itself has no dependencies)
+node_modules/
+npm-debug.log*
+
+# Test artifacts
+tests/e2e/.profiles/
+tests/e2e/.artifacts/
+*.log
+
+# Packaging output
+*.zip
+*.crx
+*.pem
 
 # Editors / IDEs
 .idea/

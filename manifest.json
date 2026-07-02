@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Refresh Plus TH",
+  "version": "1.0.0",
+  "description": "รีเฟรชหน้าเว็บอัตโนมัติ ตรวจจับคำสำคัญหรือความเปลี่ยนแปลง พร้อมเสียงและการแจ้งเตือน",
+  "minimum_chrome_version": "120",
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "32": "assets/icons/icon32.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Auto Refresh Plus TH"
+  },
+  "background": {
+    "service_worker": "background/service_worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "offscreen",
+    "notifications",
+    "alarms",
+    "scripting"
+  ],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content/content.js"],
+      "css": ["content/highlight.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

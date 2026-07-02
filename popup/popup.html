@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <title>Auto Refresh Plus TH</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../assets/icons/icon32.png" alt="" width="20" height="20">
+    <h1>Auto Refresh Plus TH</h1>
+    <span id="status-pill" class="pill pill-stopped">หยุดอยู่</span>
+  </header>
+
+  <div id="restricted-msg" class="hidden card warn">
+    ไม่สามารถใช้งานกับหน้านี้ได้ (รองรับเฉพาะเว็บ http/https)
+  </div>
+
+  <section id="live-section" class="card hidden">
+    <div class="live-row"><span>จะรีเฟรชอีกครั้งใน</span><strong id="countdown">--:--</strong></div>
+    <div class="live-row"><span>รีเฟรชแล้ว</span><strong id="cycle-count">0 ครั้ง</strong></div>
+    <div class="live-row hidden" id="last-found-row">
+      <span>พบล่าสุด</span><strong id="last-found"></strong>
+    </div>
+    <div class="live-row hidden warn" id="error-row"><span id="error-text"></span></div>
+  </section>
+
+  <section class="card">
+    <h2>โหมดการทำงาน</h2>
+    <label class="radio">
+      <input type="radio" name="mode" value="reload" checked>
+      <span>รีโหลดหน้าเว็บ <small>รีเฟรชทั้งหน้าตามรอบเวลา</small></span>
+    </label>
+    <label class="radio">
+      <input type="radio" name="mode" value="monitor">
+      <span>ตรวจสอบเบื้องหลัง <small>ดึงเนื้อหามาเช็คโดยไม่รีโหลดหน้า (XHR)</small></span>
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>ช่วงเวลารีเฟรช</h2>
+    <select id="interval-select">
+      <option value="5">ทุก 5 วินาที</option>
+      <option value="10">ทุก 10 วินาที</option>
+      <option value="15">ทุก 15 วินาที</option>
+      <option value="30" selected>ทุก 30 วินาที</option>
+      <option value="60">ทุก 1 นาที</option>
+      <option value="300">ทุก 5 นาที</option>
+      <option value="900">ทุก 15 นาที</option>
+      <option value="custom">กำหนดเอง…</option>
+      <option value="random">สุ่มช่วงเวลา…</option>
+    </select>
+    <div id="custom-interval" class="row hidden">
+      <label>วินาที <input type="number" id="custom-seconds" min="2" value="30"></label>
+    </div>
+    <div id="random-interval" class="row hidden">
+      <label>ต่ำสุด <input type="number" id="random-min" min="2" value="20"></label>
+      <label>สูงสุด <input type="number" id="random-max" min="3" value="60"></label>
+      <small>วินาที (สุ่มใหม่ทุกรอบ ช่วยเลี่ยงการถูกมองว่าเป็นบอท)</small>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>การตรวจจับ</h2>
+    <label class="radio">
+      <input type="radio" name="detection" value="keywords" checked>
+      <span>ตรวจจับคำ</span>
+    </label>
+    <div id="keywords-box">
+      <textarea id="keywords" rows="3" placeholder="พิมพ์หนึ่งคำต่อหนึ่งบรรทัด เช่น&#10;มีสินค้า&#10;in stock"></textarea>
+      <label class="check"><input type="checkbox" id="case-sensitive">
+        <span>แยกตัวพิมพ์ใหญ่-เล็ก (A ≠ a)</span></label>
+    </div>
+    <label class="radio">
+      <input type="radio" name="detection" value="change">
+      <span>ตรวจจับความเปลี่ยนแปลงของหน้า <small>ไม่ต้องระบุคำ — แจ้งเมื่อเนื้อหาต่างไปจากตอนเริ่ม</small></span>
+    </label>
+    <label class="radio">
+      <input type="radio" name="detection" value="none">
+      <span>ไม่ต้องตรวจจับ <small>รีเฟรชอย่างเดียว</small></span>
+    </label>
+  </section>
+
+  <section class="card" id="onfound-section">
+    <h2>เมื่อพบ</h2>
+    <label class="check"><input type="checkbox" id="of-stop" checked><span>หยุดรีเฟรช</span></label>
+    <label class="check"><input type="checkbox" id="of-sound" checked><span>เล่นเสียงแจ้งเตือน (วนจนกดหยุด)</span></label>
+    <label class="check"><input type="checkbox" id="of-notification" checked><span>แจ้งเตือนบนเดสก์ท็อป</span></label>
+    <label class="check"><input type="checkbox" id="of-highlight" checked><span>ไฮไลต์คำที่พบในหน้า</span></label>
+    <label class="check"><input type="checkbox" id="of-focus"><span>สลับมาที่แท็บนี้อัตโนมัติ</span></label>
+    <label class="check"><input type="checkbox" id="of-autoclick"><span>คลิกอัตโนมัติเมื่อพบ</span></label>
+    <div id="clicktarget-box" class="row hidden">
+      <input type="text" id="click-target"
+             placeholder="ข้อความบนปุ่ม หรือ CSS selector (เว้นว่าง = คลิกตรงคำที่พบ)">
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>เสียงแจ้งเตือน</h2>
+    <div class="row">
+      <select id="sound-select">
+        <option value="beep">เสียงบี๊บ</option>
+        <option value="chime">เสียงระฆัง</option>
+        <option value="alarm">เสียงไซเรน</option>
+        <option value="ding">เสียงกริ่ง</option>
+        <option value="custom">เสียงที่อัปโหลด</option>
+      </select>
+      <button id="test-sound" class="btn small" type="button">ทดสอบ</button>
+      <button id="stop-sound" class="btn small" type="button" disabled>หยุดเสียง</button>
+    </div>
+    <div class="row">
+      <label class="volume-label">ระดับเสียง
+        <input type="range" id="volume" min="0" max="100" value="80">
+        <span id="volume-value">80%</span>
+      </label>
+    </div>
+    <div class="row">
+      <label class="upload-label btn small">
+        อัปโหลดเสียง (mp3/wav)
+        <input type="file" id="sound-file" accept="audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" hidden>
+      </label>
+      <span id="custom-sound-name" class="muted"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <label class="check"><input type="checkbox" id="overlay-enabled">
+      <span>แสดงตัวจับเวลาลอยบนหน้าเว็บ <small>ลากย้ายตำแหน่งได้</small></span></label>
+  </section>
+
+  <div id="form-error" class="warn hidden"></div>
+
+  <footer>
+    <button id="save-defaults" class="btn" type="button">บันทึกเป็นค่าเริ่มต้น</button>
+    <button id="start-stop" class="btn primary" type="button">เริ่ม</button>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,37 +1,29 @@
-# Contributing to Gitmini
+# การมีส่วนร่วมพัฒนา (Contributing)
 
-Thanks for your interest in contributing!
+ขอบคุณที่สนใจร่วมพัฒนา!
 
-## Getting started
+## เริ่มต้น
 
-1. Fork and clone the repository.
-2. Create a virtual environment and install the development dependencies:
+ไม่มี build step — โคลน repo แล้วโหลดเป็น unpacked extension ได้ทันที
+(`chrome://extensions` → Developer mode → Load unpacked)
 
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -e ".[dev]"
-   ```
+## ก่อนเปิด Pull Request
 
-3. (Optional) Install the pre-commit hooks:
-
-   ```bash
-   pip install pre-commit
-   pre-commit install
-   ```
-
-## Before you open a pull request
-
-Please make sure the checks that run in CI pass locally:
+รันเช็คเดียวกับ CI ให้ผ่านก่อน:
 
 ```bash
-ruff check .
-ruff format --check .
-pytest
+python3 -c "import json; json.load(open('manifest.json'))"
+git ls-files '*.js' '*.mjs' | xargs -n1 node --check
+python3 tools/generate_sounds.py --check
+python3 tools/generate_icons.py --check
+node tests/e2e/smoke.test.mjs   # ต้องมี playwright + chromium
 ```
 
-## Guidelines
+## แนวทาง
 
-- Keep changes focused and include tests for new behavior.
-- Follow the existing code style; Ruff handles formatting and linting.
-- Write clear commit messages describing what changed and why.
+- แก้ assets ต้องแก้ผ่าน generator ใน `tools/` แล้วรันใหม่ (CI เทียบไบต์ต่อไบต์)
+- ค่าคงที่ message/storage อยู่ที่ `common/messages.js` — ถ้าแก้ ต้องอัปเดต
+  string literal ใน `content/content.js` ให้ตรงกันด้วย (content script เป็น
+  classic script ใช้ import ไม่ได้)
+- เพิ่มฟีเจอร์ควรเพิ่มสถานการณ์ทดสอบใน `tests/e2e/smoke.test.mjs`
+- UI ใช้ภาษาไทย ข้อความ error ภาษาไทย

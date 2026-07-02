@@ -1,0 +1,7 @@
+/* Keyword highlight — inline span so page layout is preserved. */
+.arp-kw-highlight {
+  background: #ffe100 !important;
+  color: #000 !important;
+  outline: 2px solid #ff6d00 !important;
+  border-radius: 2px !important;
+}
